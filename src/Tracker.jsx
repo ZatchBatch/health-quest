@@ -307,6 +307,10 @@ export default function Tracker({session}){
       <div style={{position:"sticky",top:0,zIndex:10}}>
       <canvas ref={bannerRef} width={678} height={138} style={{width:"100%",height:"auto",imageRendering:"pixelated",display:"block"}}/>
 
+      <div style={cs.tabs}>
+        {["today","history","settings"].map(v=>(<button key={v} style={cs.tab(view===v)} onClick={()=>setView(v)}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>))}
+      </div>
+
       <div style={{background:dm.card,padding:"16px 20px 14px",borderBottom:`0.5px solid ${dm.border}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
           <div>
@@ -328,10 +332,6 @@ export default function Tracker({session}){
         <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:dm.hint,marginTop:4}}>
           <span>0</span><span>{settings.daily} pts</span>
         </div>
-      </div>
-
-      <div style={cs.tabs}>
-        {["today","history","settings"].map(v=>(<button key={v} style={cs.tab(view===v)} onClick={()=>setView(v)}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>))}
       </div>
       </div>
 
