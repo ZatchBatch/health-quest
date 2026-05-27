@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabase";
 
-const DAILY_GOAL = 300;
-const WEEKLY_GOAL = 1800;
+const DAILY_GOAL = 250;
+const WEEKLY_GOAL = 1250;
 
 // ── BANNER ────────────────────────────────────────────────────────────
 const BP = {
