@@ -237,9 +237,13 @@ export default function Tracker({session}){
   // Load all data from Supabase on mount
   useEffect(()=>{
     async function load(){
-      const{data,error}=await supabase.from('habit_days').select('date,data').eq('user_id',session.user.id);
+      const[{data:rows,error},{data:{user}}]=await Promise.all([
+        supabase.from('habit_days').select('date,data').eq('user_id',session.user.id),
+        supabase.auth.getUser(),
+      ]);
       if(error){console.error(error);return;}
-      const map={};data.forEach(row=>{if(row.date==='__settings__')setSettings(row.data);else map[row.date]=row.data;});
+      if(user?.user_metadata?.settings)setSettings(user.user_metadata.settings);
+      const map={};rows.forEach(row=>{if(row.date!=='__settings__')map[row.date]=row.data;});
       setAllData(map);
     }
     // localStorage gives fast initial load; Supabase overrides with synced value
@@ -259,7 +263,7 @@ export default function Tracker({session}){
     setSaving(false);
   }
 
-  function saveSettings(s){setSettings(s);localStorage.setItem('hq_settings',JSON.stringify(s));supabase.from('habit_days').upsert({user_id:session.user.id,date:'__settings__',data:s,updated_at:new Date().toISOString()},{onConflict:'user_id,date'});}
+  function saveSettings(s){setSettings(s);localStorage.setItem('hq_settings',JSON.stringify(s));supabase.auth.updateUser({data:{settings:s}});}
   function saveApiKey(k){setApiKey(k);localStorage.setItem('hq_apikey',k);}
   async function signOut(){await supabase.auth.signOut();}
 
