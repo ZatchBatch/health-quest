@@ -172,7 +172,57 @@ function TodayView({d,update,setModal}){const[open,setOpen]=useState({body:true,
 
 function HistoryView({allData,goal}){const days=[];for(let i=0;i<60;i++){const dt=new Date();dt.setDate(dt.getDate()-i);const k=dt.toISOString().slice(0,10);days.push({k,pts:calcPoints(allData[k]||defaultDay()),label:dt.toLocaleDateString("en-US",{month:"short",day:"numeric"}),hasData:!!allData[k]});}return(<div style={cs.sec}><div style={{paddingBottom:10}}><span style={cs.secHead}>Last 60 days</span></div><div style={cs.card}>{days.map(({k,pts,label,hasData},i)=>{const pct=Math.min(100,Math.round((pts/goal)*100)),met=pts>=goal,partial=pts>=goal*0.55;return(<div key={k}><div style={{...cs.row,minHeight:52}}><span style={{fontSize:14,color:dm.subtext,minWidth:60}}>{label}</span><div style={{flex:1,margin:"0 10px"}}><div style={{height:8,borderRadius:4,background:dm.border,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:met?dm.green:partial?dm.orange:dm.blue,borderRadius:4,transition:"width 0.4s"}}/></div></div><span style={{fontSize:14,fontWeight:500,minWidth:32,textAlign:"right",color:dm.text}}>{pts}</span>{hasData&&<span style={cs.badge(met)}>{met?"Goal":partial?"~":"Low"}</span>}</div>{i<days.length-1&&<div style={cs.divider}/>}</div>);})}</div></div>);}
 
-function SettingsView({settings,saveSettings,allData,apiKey,saveApiKey,onSignOut}){const[keyVal,setKeyVal]=useState(apiKey||"");const[keyVisible,setKeyVisible]=useState(false);function exportCSV(){const rows=[["Date","Points","Goal Met","Scripture","Prayer Duration","Workouts","Breakfast","Lunch","Dinner","Journal Entries"]];Object.keys(allData).sort().forEach(k=>{const d=allData[k],pts=calcPoints(d);rows.push([k,pts,pts>=settings.daily?"Yes":"No",d.scripture||"",d.prayer?.duration||"",(d.workouts||[]).map(w=>["","Light","Moderate","Intense"][w]).join("+"),d.meals?.breakfast||"",d.meals?.lunch||"",d.meals?.dinner||"",(d.journal||[]).length].map(v=>`"${String(v).replace(/"/g,'""')}"`));});const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(rows.map(r=>r.join(",")).join("\n"));a.download="habits.csv";a.click();}return(<div style={cs.sec}><div style={{paddingBottom:10}}><span style={cs.secHead}>Goals</span></div><div style={cs.card}><div style={{padding:"14px 16px"}}><label style={{fontSize:14,color:dm.subtext,display:"block",marginBottom:6}}>Daily point goal</label><input style={cs.inp} type="number" value={settings.daily} onChange={e=>saveSettings({...settings,daily:Number(e.target.value)})}/></div><div style={cs.divider}/><div style={{padding:"14px 16px"}}><label style={{fontSize:14,color:dm.subtext,display:"block",marginBottom:6}}>Weekly point goal</label><input style={cs.inp} type="number" value={settings.weekly} onChange={e=>saveSettings({...settings,weekly:Number(e.target.value)})}/></div></div><div style={{paddingTop:24,paddingBottom:10}}><span style={cs.secHead}>Calorie estimation</span></div><div style={cs.card}><div style={{padding:"14px 16px"}}><label style={{fontSize:14,color:dm.subtext,display:"block",marginBottom:6}}>Anthropic API key</label><div style={{display:"flex",gap:8}}><input style={{...cs.inp,flex:1}} type={keyVisible?"text":"password"} placeholder="sk-ant-..." value={keyVal} onChange={e=>setKeyVal(e.target.value)}/><button style={{...cs.chip(false),flexShrink:0}} onClick={()=>setKeyVisible(v=>!v)}>{keyVisible?"Hide":"Show"}</button></div><p style={{fontSize:12,color:dm.hint,marginTop:8}}>Used only for calorie estimates. Stored locally in your browser.</p></div></div><button style={{...cs.bigBtn(true),marginTop:10}} onClick={()=>saveApiKey(keyVal)}>Save key</button><div style={{paddingTop:24,paddingBottom:10}}><span style={cs.secHead}>Data</span></div><button style={{...cs.bigBtn(false)}} onClick={exportCSV}>Export CSV backup</button><p style={{fontSize:13,color:dm.hint,marginTop:8,paddingBottom:16}}>Exports all {Object.keys(allData).length} logged days.</p><div style={{paddingTop:8,paddingBottom:10}}><span style={cs.secHead}>Account</span></div><button style={{...cs.bigBtn(false),color:dm.red,borderColor:dm.red}} onClick={onSignOut}>Sign out</button></div>);}
+function SettingsView({settings,saveSettings,allData,apiKey,saveApiKey,onSignOut}){const[keyVal,setKeyVal]=useState(apiKey||"");const[keyVisible,setKeyVisible]=useState(false);function exportCSV(){
+  const yn=v=>v?"Yes":"No";
+  const scrLbl=["","10 min","20 min","30+ min"];
+  const prayLbl=["","5 min","15 min","25+ min"];
+  const walkLbl=["","10 min","30 min","60+ min"];
+  const bookLbl=["","20 min","40 min","60+ min"];
+  const cleanLbl=["","10 min","30 min","60+ min"];
+  const wrkLbl=["","Light","Moderate","Intense"];
+  const headers=["Date","Points","Goal Met","Daily Goal",
+    "Brush AM","Brush PM","Floss","Shower","Shave",
+    "Workouts","Workout Note","Push-ups","Groom","Sunscreen","Nap","Breathing",
+    "Medicine","BP Reading 1","BP Reading 2","Weight",
+    "Scripture","Scripture Note","Prayer","Prayer Topic",
+    "Emotions","Emotion Notes","Connected With",
+    "Plan Day","Notifs to Zero","Email to Zero","Avoided Task","Avoided Task Note",
+    "Walk","Journal Count","Journal Prompts","Journal Responses","Read Book","Reading Note",
+    "Breakfast","Lunch","Dinner","Snacks","Cook Meal","Water Refills","Plate Food","Taste Journal",
+    "Make Bed","Mow Lawn","Cleaning Session","Cleaning Areas"];
+  const rows=[headers];
+  Object.keys(allData).sort().forEach(k=>{
+    const d=allData[k],pts=calcPoints(d);
+    const bp1=d.bp?.[0]?`${d.bp[0].sys}/${d.bp[0].dia} @ ${d.bp[0].time}`:"";
+    const bp2=d.bp?.[1]?`${d.bp[1].sys}/${d.bp[1].dia} @ ${d.bp[1].time}`:"";
+    const journals=d.journal||[];
+    const emotions=(d.emotions||[]).map(e=>[e.core,e.mid,e.specific].filter(Boolean).join(" > ")).join(" | ");
+    const emotionNotes=(d.emotions||[]).map(e=>e.note||"").filter(Boolean).join(" | ");
+    rows.push([
+      k,pts,pts>=settings.daily?"Yes":"No",settings.daily,
+      yn(d.brushAM),yn(d.brushPM),yn(d.floss),yn(d.shower),yn(d.shave),
+      (d.workouts||[]).map(w=>wrkLbl[w]).join(" + "),d.workoutNote||"",d.pushups||"",
+      yn(d.groom),yn(d.sunscreen),yn(d.nap),yn(d.breathing),
+      yn(d.medicine),bp1,bp2,d.weight||"",
+      scrLbl[d.scripture||0],d.scriptureNote||"",
+      prayLbl[d.prayer?.duration||0],d.prayer?.topic||"",
+      emotions,emotionNotes,d.connectNote||"",
+      yn(d.planDay),yn(d.notifZero),yn(d.emailZero),yn(d.avoidedTask),d.avoidedTaskNote||"",
+      walkLbl[d.walk||0],journals.length,
+      journals.map(e=>e.prompt).join(" | "),
+      journals.map(e=>e.response).join(" | "),
+      bookLbl[d.readBook||0],d.readBookNote||"",
+      d.meals?.breakfast||"",d.meals?.lunch||"",d.meals?.dinner||"",
+      (d.snacks||[]).join(" | "),
+      yn(d.cookMeal),d.waterRefills||0,yn(d.platFood),d.tasteJournal||"",
+      yn(d.makeBed),yn(d.mowLawn),cleanLbl[d.cleaning?.tier||0],(d.cleaning?.subs||[]).join(", ")
+    ].map(v=>`"${String(v).replace(/"/g,'""')}"`));
+  });
+  const a=document.createElement("a");
+  a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(rows.map(r=>r.join(",")).join("\n"));
+  a.download="habits.csv";
+  a.click();
+}return(<div style={cs.sec}><div style={{paddingBottom:10}}><span style={cs.secHead}>Goals</span></div><div style={cs.card}><div style={{padding:"14px 16px"}}><label style={{fontSize:14,color:dm.subtext,display:"block",marginBottom:6}}>Daily point goal</label><input style={cs.inp} type="number" value={settings.daily} onChange={e=>saveSettings({...settings,daily:Number(e.target.value)})}/></div><div style={cs.divider}/><div style={{padding:"14px 16px"}}><label style={{fontSize:14,color:dm.subtext,display:"block",marginBottom:6}}>Weekly point goal</label><input style={cs.inp} type="number" value={settings.weekly} onChange={e=>saveSettings({...settings,weekly:Number(e.target.value)})}/></div></div><div style={{paddingTop:24,paddingBottom:10}}><span style={cs.secHead}>Calorie estimation</span></div><div style={cs.card}><div style={{padding:"14px 16px"}}><label style={{fontSize:14,color:dm.subtext,display:"block",marginBottom:6}}>Anthropic API key</label><div style={{display:"flex",gap:8}}><input style={{...cs.inp,flex:1}} type={keyVisible?"text":"password"} placeholder="sk-ant-..." value={keyVal} onChange={e=>setKeyVal(e.target.value)}/><button style={{...cs.chip(false),flexShrink:0}} onClick={()=>setKeyVisible(v=>!v)}>{keyVisible?"Hide":"Show"}</button></div><p style={{fontSize:12,color:dm.hint,marginTop:8}}>Used only for calorie estimates. Stored locally in your browser.</p></div></div><button style={{...cs.bigBtn(true),marginTop:10}} onClick={()=>saveApiKey(keyVal)}>Save key</button><div style={{paddingTop:24,paddingBottom:10}}><span style={cs.secHead}>Data</span></div><button style={{...cs.bigBtn(false)}} onClick={exportCSV}>Export CSV backup</button><p style={{fontSize:13,color:dm.hint,marginTop:8,paddingBottom:16}}>Exports all {Object.keys(allData).length} logged days.</p><div style={{paddingTop:8,paddingBottom:10}}><span style={cs.secHead}>Account</span></div><button style={{...cs.bigBtn(false),color:dm.red,borderColor:dm.red}} onClick={onSignOut}>Sign out</button></div>);}
 
 export default function Tracker({session}){
   const[view,setView]=useState("today");
