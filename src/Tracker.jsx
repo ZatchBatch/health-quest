@@ -310,7 +310,7 @@ export default function Tracker({session}){
       {modal==="snack"&&<FoodSheet title="Log snack" initialValue="" onSave={v=>update({snacks:[...(d.snacks||[]),v]})} onClose={()=>setModal(null)} apiKey={apiKey} offerTaste={true} onTaste={v=>update({tasteJournal:v})}/>}
       {mealKey&&<FoodSheet title={`Log ${mealKey}`} initialValue="" onSave={v=>update({meals:{...d.meals,[mealKey]:d.meals?.[mealKey]?d.meals[mealKey]+' | '+v:v}})} onClose={()=>setModal(null)} apiKey={apiKey} offerTaste={true} onTaste={v=>update({tasteJournal:v})}/>}
 
-      <div style={{position:"sticky",top:0,zIndex:10}}>
+      <div style={{position:"sticky",top:0,zIndex:10,background:dm.bg}}>
       <canvas ref={bannerRef} width={678} height={138} style={{width:"100%",height:"auto",imageRendering:"pixelated",display:"block"}}/>
 
       <div style={cs.tabs}>
