@@ -13,6 +13,9 @@ export default async function handler(req, res) {
       body: JSON.stringify({ model, max_tokens, messages }),
     });
     const data = await response.json();
+    if (!response.ok) {
+      return res.status(response.status).json({ ...data, _debug: { model, max_tokens, messagesCount: messages?.length } });
+    }
     res.status(response.status).json(data);
   } catch (e) {
     res.status(500).json({ error: { message: e.message } });
