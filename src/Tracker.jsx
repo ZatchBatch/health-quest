@@ -304,6 +304,7 @@ export default function Tracker({session}){
       {modal==="snack"&&<FoodSheet title="Log snack" initialValue="" onSave={v=>update({snacks:[...(d.snacks||[]),v]})} onClose={()=>setModal(null)} apiKey={apiKey} offerTaste={false}/>}
       {mealKey&&<FoodSheet title={`Log ${mealKey}`} initialValue={d.meals?.[mealKey]||""} onSave={v=>update({meals:{...d.meals,[mealKey]:v}})} onClose={()=>setModal(null)} apiKey={apiKey} offerTaste={true} onTaste={v=>update({tasteJournal:v})}/>}
 
+      <div style={{position:"sticky",top:0,zIndex:10}}>
       <canvas ref={bannerRef} width={678} height={138} style={{width:"100%",height:"auto",imageRendering:"pixelated",display:"block"}}/>
 
       <div style={{background:dm.card,padding:"16px 20px 14px",borderBottom:`0.5px solid ${dm.border}`}}>
@@ -331,6 +332,7 @@ export default function Tracker({session}){
 
       <div style={cs.tabs}>
         {["today","history","settings"].map(v=>(<button key={v} style={cs.tab(view===v)} onClick={()=>setView(v)}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>))}
+      </div>
       </div>
 
       {view==="today"&&<TodayView d={d} update={update} setModal={setModal}/>}
