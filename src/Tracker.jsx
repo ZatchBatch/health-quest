@@ -189,13 +189,13 @@ export default function Tracker({session}){
     async function load(){
       const{data,error}=await supabase.from('habit_days').select('date,data').eq('user_id',session.user.id);
       if(error){console.error(error);return;}
-      const map={};data.forEach(row=>{map[row.date]=row.data;});
+      const map={};data.forEach(row=>{if(row.date==='__settings__')setSettings(row.data);else map[row.date]=row.data;});
       setAllData(map);
     }
-    load();
-    // Load settings & API key from localStorage (device-specific is fine for these)
+    // localStorage gives fast initial load; Supabase overrides with synced value
     const s=localStorage.getItem('hq_settings');if(s)setSettings(JSON.parse(s));
     const k=localStorage.getItem('hq_apikey');if(k)setApiKey(k);
+    load();
   },[session]);
 
   const today=todayKey();
@@ -209,7 +209,7 @@ export default function Tracker({session}){
     setSaving(false);
   }
 
-  function saveSettings(s){setSettings(s);localStorage.setItem('hq_settings',JSON.stringify(s));}
+  function saveSettings(s){setSettings(s);localStorage.setItem('hq_settings',JSON.stringify(s));supabase.from('habit_days').upsert({user_id:session.user.id,date:'__settings__',data:s,updated_at:new Date().toISOString()},{onConflict:'user_id,date'});}
   function saveApiKey(k){setApiKey(k);localStorage.setItem('hq_apikey',k);}
   async function signOut(){await supabase.auth.signOut();}
 
