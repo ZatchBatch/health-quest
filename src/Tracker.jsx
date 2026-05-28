@@ -48,7 +48,14 @@ const WHEEL = {
 };
 const CORE_EMOTIONS = Object.keys(WHEEL);
 const CLEANING_SUBS = ["Laundry","Dishes","Trash","Vacuuming","Bathrooms","Other"];
-const todayKey = () => new Date().toISOString().slice(0,10);
+const todayKey = () => {
+  const eastern = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  if (eastern.getHours() < 3) eastern.setDate(eastern.getDate() - 1);
+  const y = eastern.getFullYear();
+  const m = String(eastern.getMonth() + 1).padStart(2, '0');
+  const d = String(eastern.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
 const EMOTION_WORDS = ["Cry","Laugh","Moan","Sigh","Scream","Grin","Wince","Beam","Sulk","Fume","Ache","Glow","Simmer","Tremble","Gasp","Snap","Melt","Vent","Grieve","Burst","Radiate","Sting","Bloom","Rage","Yearn","Dread","Soar","Sink"];
 const EMOTION_BTN = EMOTION_WORDS[Math.floor(Math.random()*EMOTION_WORDS.length)];
 
