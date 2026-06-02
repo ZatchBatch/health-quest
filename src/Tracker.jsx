@@ -289,7 +289,7 @@ export default function Tracker({session}){
   const mealKey=modal&&modal.startsWith("meal-")?modal.slice(5):null;
   const barColor=pts>=settings.daily?dm.green:pts>=settings.daily*0.55?dm.orange:dm.blue;
   const turtleState=pts>=settings.daily?3:pts>=settings.daily*0.67?2:pts>=settings.daily*0.34?1:0;
-  const streak=(()=>{let s=0;const t=new Date();for(let i=0;i<365;i++){const dt=new Date(t);dt.setDate(dt.getDate()-i);const k=dt.toISOString().slice(0,10);if(calcPoints(allData[k]||{})<settings.daily)break;s++;}return s;})();
+  const streak=(()=>{let s=0;const t=new Date();const todayKey=t.toISOString().slice(0,10);const start=calcPoints(allData[todayKey]||{})>=settings.daily?0:1;for(let i=start;i<365;i++){const dt=new Date(t);dt.setDate(dt.getDate()-i);const k=dt.toISOString().slice(0,10);if(calcPoints(allData[k]||{})<settings.daily)break;s++;}return s;})();
 
   useEffect(()=>{
     const canvas=bannerRef.current;if(!canvas)return;
