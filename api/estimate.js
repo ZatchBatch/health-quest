@@ -8,8 +8,9 @@ export const config = {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
-  const { apiKey, model, max_tokens, messages } = req.body || {};
-  if (!apiKey) return res.status(400).json({ error: { message: 'No API key provided' } });
+  const { model, max_tokens, messages } = req.body || {};
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: { message: 'Server is missing ANTHROPIC_API_KEY' } });
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
