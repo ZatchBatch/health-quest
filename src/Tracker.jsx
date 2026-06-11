@@ -49,15 +49,22 @@ const WHEEL = {
 const CORE_EMOTIONS = Object.keys(WHEEL);
 const CLEANING_SUBS = ["Laundry","Dishes","Trash","Vacuuming","Bathrooms","Other"];
 const todayKey = () => easternDateKey(0);
-const easternDateKey = (daysAgo) => {
+// Effective Eastern day, with the daily boundary at 3 AM ET (before 3 AM counts as the previous day).
+const easternEffectiveDate = () => {
   const eastern = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   if (eastern.getHours() < 3) eastern.setDate(eastern.getDate() - 1);
+  return eastern;
+};
+const easternDateKey = (daysAgo) => {
+  const eastern = easternEffectiveDate();
   eastern.setDate(eastern.getDate() - daysAgo);
   const y = eastern.getFullYear();
   const m = String(eastern.getMonth() + 1).padStart(2, '0');
   const d = String(eastern.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 };
+// Days elapsed since the most recent Monday (0 = today is Monday). Week resets Monday 3 AM ET.
+const daysSinceWeekReset = () => (easternEffectiveDate().getDay() + 6) % 7;
 const EMOTION_WORDS = ["Cry","Laugh","Moan","Sigh","Scream","Grin","Wince","Beam","Sulk","Fume","Ache","Glow","Simmer","Tremble","Gasp","Snap","Melt","Vent","Grieve","Burst","Radiate","Sting","Bloom","Rage","Yearn","Dread","Soar","Sink"];
 const EMOTION_BTN = EMOTION_WORDS[Math.floor(Math.random()*EMOTION_WORDS.length)];
 
@@ -104,29 +111,59 @@ const defaultDay = () => ({
   makeBed:false,mowLawn:false,cleaning:{tier:0,subs:[]},
 });
 
-function calcPoints(d) {
-  let p=0;
-  if(d.brushAM)p+=10;if(d.brushPM)p+=10;if(d.floss)p+=10;
-  if(d.shower)p+=10;if(d.shave)p+=10;
-  if(d.groom)p+=10;if(d.sunscreen)p+=10;if(d.nap)p+=15;if(d.breathing)p+=15;
-  (d.workouts||[]).forEach(w=>{p+=[0,15,30,60][w.val??w]||0;});
-  if(d.medicine)p+=10;p+=(d.bp?.length||0)*10;if(d.weight)p+=10;
-  p+=[0,15,25,35][d.scripture]||0;
-  if(d.prayer?.duration)p+=[0,15,25,35][d.prayer.duration]||0;
-  p+=(d.emotions?.length||0)*10;if(d.connect)p+=30;
-  if(d.planDay)p+=20;if(d.notifZero)p+=20;if(d.emailZero)p+=25;
-  if(d.avoidedTask)p+=50;
-  p+=[0,20,40,70][d.walk]||0;
-  p+=Math.min(3,(d.journal?.length||0))*20;
-  p+=[0,25,45,70][d.readBook]||0;
-  p+=Math.min(60,(d.hobbies||[]).reduce((a,h)=>a+Math.floor((h.minutes||0)/30)*10,0));
-  if(d.meals?.breakfast)p+=10;if(d.meals?.lunch)p+=10;if(d.meals?.dinner)p+=10;
-  p+=(d.snacks?.length||0)*3;if(d.tasteJournal)p+=10;
-  if(d.cookMeal)p+=30;p+=Math.min(5,d.waterRefills||0)*5;if(d.platFood)p+=15;if(d.makeCoffee)p+=10;
-  if(d.makeBed)p+=10;if(d.mowLawn)p+=80;
-  p+=[0,20,40,70][d.cleaning?.tier]||0;
-  return p;
-}
+// ---- Neglect bonus: a habit's value climbs the longer it goes undone, then resets when you do it ----
+const NEGLECT_GROWTH=0.20;   // +20% of base value per neglected day (beyond the grace window)
+const NEGLECT_MAX=2.5;       // value caps at 2.5x base
+// Days a habit may sit before its value starts climbing (default 1 = climbs the day after you last did it).
+const CADENCE={mowLawn:7};   // mowing is a weekly task — no boost until a full week has passed
+// Every scored line. base = per-instance value used for the "worth more" preview;
+// pts = points actually earned that day; done = was it logged that day (resets the neglect clock).
+const HABITS=[
+  {id:'brushAM',label:'Brush (AM)',base:10,pts:d=>d.brushAM?10:0,done:d=>!!d.brushAM},
+  {id:'brushPM',label:'Brush (PM)',base:10,pts:d=>d.brushPM?10:0,done:d=>!!d.brushPM},
+  {id:'floss',label:'Floss',base:10,pts:d=>d.floss?10:0,done:d=>!!d.floss},
+  {id:'shower',label:'Shower',base:10,pts:d=>d.shower?10:0,done:d=>!!d.shower},
+  {id:'shave',label:'Shave',base:10,pts:d=>d.shave?10:0,done:d=>!!d.shave},
+  {id:'groom',label:'Groom',base:10,pts:d=>d.groom?10:0,done:d=>!!d.groom},
+  {id:'sunscreen',label:'Sunscreen',base:10,pts:d=>d.sunscreen?10:0,done:d=>!!d.sunscreen},
+  {id:'nap',label:'Nap',base:15,pts:d=>d.nap?15:0,done:d=>!!d.nap},
+  {id:'breathing',label:'Breathing',base:15,pts:d=>d.breathing?15:0,done:d=>!!d.breathing},
+  {id:'workouts',label:'Work out',base:15,pts:d=>(d.workouts||[]).reduce((a,w)=>a+([0,15,30,60][w.val??w]||0),0),done:d=>(d.workouts||[]).length>0},
+  {id:'medicine',label:'Medicine',base:10,pts:d=>d.medicine?10:0,done:d=>!!d.medicine},
+  {id:'bp',label:'Blood pressure',base:10,pts:d=>(d.bp?.length||0)*10,done:d=>(d.bp?.length||0)>0},
+  {id:'weight',label:'Log weight',base:10,pts:d=>d.weight?10:0,done:d=>!!d.weight},
+  {id:'scripture',label:'Scripture',base:15,pts:d=>[0,15,25,35][d.scripture]||0,done:d=>(d.scripture||0)>0},
+  {id:'prayer',label:'Prayer',base:15,pts:d=>d.prayer?.duration?[0,15,25,35][d.prayer.duration]||0:0,done:d=>(d.prayer?.duration||0)>0},
+  {id:'emotions',label:'Emotional check-in',base:10,pts:d=>(d.emotions?.length||0)*10,done:d=>(d.emotions?.length||0)>0},
+  {id:'connect',label:'Connect',base:30,pts:d=>d.connect?30:0,done:d=>!!d.connect},
+  {id:'planDay',label:'Plan your day',base:20,pts:d=>d.planDay?20:0,done:d=>!!d.planDay},
+  {id:'notifZero',label:'Notifs to zero',base:20,pts:d=>d.notifZero?20:0,done:d=>!!d.notifZero},
+  {id:'emailZero',label:'Email to zero',base:25,pts:d=>d.emailZero?25:0,done:d=>!!d.emailZero},
+  {id:'avoidedTask',label:'Avoided task',base:50,pts:d=>d.avoidedTask?50:0,done:d=>!!d.avoidedTask},
+  {id:'walk',label:'Phone-free walk',base:20,pts:d=>[0,20,40,70][d.walk]||0,done:d=>(d.walk||0)>0},
+  {id:'journal',label:'Journal',base:20,pts:d=>Math.min(3,(d.journal?.length||0))*20,done:d=>(d.journal?.length||0)>0},
+  {id:'readBook',label:'Read a book',base:25,pts:d=>[0,25,45,70][d.readBook]||0,done:d=>(d.readBook||0)>0},
+  {id:'hobby',label:'Hobby',base:10,pts:d=>Math.min(60,(d.hobbies||[]).reduce((a,h)=>a+Math.floor((h.minutes||0)/30)*10,0)),done:d=>(d.hobbies||[]).length>0},
+  {id:'breakfast',label:'Breakfast',base:10,pts:d=>d.meals?.breakfast?10:0,done:d=>!!d.meals?.breakfast},
+  {id:'lunch',label:'Lunch',base:10,pts:d=>d.meals?.lunch?10:0,done:d=>!!d.meals?.lunch},
+  {id:'dinner',label:'Dinner',base:10,pts:d=>d.meals?.dinner?10:0,done:d=>!!d.meals?.dinner},
+  {id:'snacks',label:'Snack',base:3,pts:d=>(d.snacks?.length||0)*3,done:d=>(d.snacks?.length||0)>0},
+  {id:'tasteJournal',label:'Taste journal',base:10,pts:d=>d.tasteJournal?10:0,done:d=>!!d.tasteJournal},
+  {id:'cookMeal',label:'Cook a meal',base:30,pts:d=>d.cookMeal?30:0,done:d=>!!d.cookMeal},
+  {id:'waterRefills',label:'Hydrate',base:5,pts:d=>Math.min(5,d.waterRefills||0)*5,done:d=>(d.waterRefills||0)>0},
+  {id:'platFood',label:'Plate food',base:15,pts:d=>d.platFood?15:0,done:d=>!!d.platFood},
+  {id:'makeCoffee',label:'Make coffee',base:10,pts:d=>d.makeCoffee?10:0,done:d=>!!d.makeCoffee},
+  {id:'makeBed',label:'Make bed',base:10,pts:d=>d.makeBed?10:0,done:d=>!!d.makeBed},
+  {id:'mowLawn',label:'Mow the lawn',base:80,pts:d=>d.mowLawn?80:0,done:d=>!!d.mowLawn},
+  {id:'cleaning',label:'Cleaning session',base:20,pts:d=>[0,20,40,70][d.cleaning?.tier]||0,done:d=>(d.cleaning?.tier||0)>0},
+];
+const shiftKey=(key,delta)=>{const[y,m,dd]=key.split('-').map(Number);const dt=new Date(y,m-1,dd);dt.setDate(dt.getDate()+delta);return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;};
+// Days since a habit was last done, counting only days within the tracked history (so a fresh
+// account doesn't treat the time before it existed as neglect). Missing days inside the range count as neglect.
+function daysSinceDone(habit,allData,dateKey){const keys=Object.keys(allData);if(!keys.length)return 0;const earliest=keys.reduce((a,b)=>a<b?a:b);let since=0;for(let i=1;i<=400;i++){const k=shiftKey(dateKey,-i);if(k<earliest)break;since=i;const day=allData[k];if(day&&habit.done(day))return i;}return since;}
+function neglectMult(habit,allData,dateKey){const grace=CADENCE[habit.id]??1;const since=daysSinceDone(habit,allData,dateKey);return Math.min(NEGLECT_MAX,1+NEGLECT_GROWTH*Math.max(0,since-grace));}
+function neglectMults(allData,dateKey){const m={};for(const h of HABITS)m[h.id]=neglectMult(h,allData,dateKey);return m;}
+function calcPoints(d,mults){let p=0;for(const h of HABITS)p+=h.pts(d)*(mults?.[h.id]??1);return Math.round(p);}
 
 const dm={bg:"#161314",card:"#231e20",card2:"#2e2729",border:"#3a3133",text:"#f0eaec",subtext:"#b8a8ac",hint:"#6e5a5e",green:"#d4889a",orange:"#c8a0a8",blue:"#a07888",red:"#c05060"};
 const cs={
@@ -158,6 +195,7 @@ const Dots=({count,total})=>(<div style={{display:"flex",gap:4}}>{Array.from({le
 const Toggle=({on,onChange,pts})=>(<button style={cs.tog(on)} onClick={()=>onChange(!on)}><div style={cs.dot(on)}>{pts&&<span style={{fontSize:9,fontWeight:700,color:dm.hint,lineHeight:1}}>{pts}</span>}</div></button>);
 const Chevron=({open})=>(<svg width="18" height="18" viewBox="0 0 16 16" fill="none" style={{transition:"transform 0.2s",transform:open?"rotate(180deg)":"rotate(0deg)"}}><path d="M3 6l5 5 5-5" stroke={dm.hint} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>);
 const RowItem=({label,pts:p,right,last})=>(<><div style={cs.row}><span style={cs.lbl}>{label}</span>{p>0&&<span style={cs.pts}>+{p}</span>}{right}</div>{!last&&<div style={cs.divider}/>}</>);
+function HotStrip({hot,mults}){if(!hot.length)return null;return(<div style={{padding:"14px 16px 2px"}}><div style={{...cs.secHead,marginBottom:8}}>🔥 Worth more right now</div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{hot.map(h=>{const m=mults[h.id];return(<div key={h.id} style={{display:"inline-flex",alignItems:"center",gap:7,background:dm.card,border:`1px solid ${dm.green}`,borderRadius:20,padding:"7px 12px"}}><span style={{fontSize:14,color:dm.text}}>{h.label}</span><span style={{fontSize:12,color:dm.green,fontWeight:600}}>×{m.toFixed(1)} → {Math.round(h.base*m)}</span></div>);})}</div></div>);}
 function parseMacro(str,key){if(!str)return 0;const pats={cal:/(\d+(?:\.\d+)?)\s*(?:calories?|cal)/i,pro:/(\d+(?:\.\d+)?)\s*g?\s*protein/i,carb:/(\d+(?:\.\d+)?)\s*g?\s*carbs?/i,fat:/(\d+(?:\.\d+)?)\s*g?\s*fat/i};const m=str.match(pats[key]);return m?Math.round(Number(m[1])):0;}
 function CalorieDisplay({d}){const[showLog,setShowLog]=useState(false);const splitMeal=s=>s?s.split(' | '):[];const foods=[...splitMeal(d.meals?.breakfast),...splitMeal(d.meals?.lunch),...splitMeal(d.meals?.dinner),...(d.snacks||[])].filter(Boolean);const tot=foods.reduce((a,f)=>({cal:a.cal+parseMacro(f,'cal'),pro:a.pro+parseMacro(f,'pro'),carb:a.carb+parseMacro(f,'carb'),fat:a.fat+parseMacro(f,'fat')}),{cal:0,pro:0,carb:0,fat:0});const entries=[...splitMeal(d.meals?.breakfast).map((v,i)=>({label:i===0?"Breakfast":`Breakfast (${i+1})`,val:v})),...splitMeal(d.meals?.lunch).map((v,i)=>({label:i===0?"Lunch":`Lunch (${i+1})`,val:v})),...splitMeal(d.meals?.dinner).map((v,i)=>({label:i===0?"Dinner":`Dinner (${i+1})`,val:v})),...(d.snacks||[]).map((s,i)=>({label:(d.snacks.length>1?`Snack ${i+1}`:"Snack"),val:s}))];return(<><div style={{padding:"12px 16px 14px",borderBottom:`0.5px solid ${dm.border}`}}><div style={{position:"relative",textAlign:"center",marginBottom:10}}><span style={{fontSize:32,fontWeight:700,color:dm.text}}>{tot.cal}</span><span style={{fontSize:14,color:dm.subtext,marginLeft:5}}>cal today</span><button style={{position:"absolute",right:0,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:12,color:dm.hint,padding:0}} onClick={()=>setShowLog(true)}>view log →</button></div><div style={{display:"flex",gap:8}}>{[["Protein",tot.pro],["Carbs",tot.carb],["Fat",tot.fat]].map(([lbl,val])=>(<div key={lbl} style={{flex:1,background:dm.card2,borderRadius:10,padding:"8px 0",textAlign:"center"}}><div style={{fontSize:18,fontWeight:600,color:dm.text}}>{val}g</div><div style={{fontSize:11,color:dm.hint,marginTop:2}}>{lbl}</div></div>))}</div></div>{showLog&&<Sheet title="Food log" onClose={()=>setShowLog(false)}>{entries.length===0?<p style={{fontSize:14,color:dm.hint,textAlign:"center",padding:"20px 0"}}>No meals logged yet.</p>:entries.map(({label,val},i)=>(<div key={i} style={{marginBottom:16}}><div style={{fontSize:12,color:dm.hint,marginBottom:3}}>{label}</div><div style={{fontSize:14,color:dm.text,lineHeight:1.5}}>{val}</div></div>))}</Sheet>}</>);}
 
@@ -190,7 +228,7 @@ function SearchBar({setModal,d,update,onClose}){const[query,setQuery]=useState("
 
 function TodayView({d,update,setModal}){const[open,setOpen]=useState({body:true,health:true,soul:true,mind:true,food:true,home:true});const tog=k=>setOpen(o=>({...o,[k]:!o[k]}));const wpts=(d.workouts||[]).reduce((a,w)=>a+([0,15,30,60][w.val??w]||0),0);const journalCount=(d.journal?.length||0);const hobbyBlocks=(d.hobbies||[]).reduce((a,h)=>a+Math.floor((h.minutes||0)/30),0);const hobbyPts=Math.min(60,hobbyBlocks*10);return(<div style={cs.sec}><Section label="Body" open={open.body} onToggle={()=>tog("body")}><RowItem label="Brush teeth" pts={((d.brushAM?1:0)+(d.brushPM?1:0))*10} right={<div style={{display:"flex",gap:8,alignItems:"center"}}><Dots count={(d.brushAM?1:0)+(d.brushPM?1:0)} total={2}/><button style={{...cs.chip(!!(d.brushAM||d.brushPM)),position:"relative"}} onClick={()=>{if(!d.brushAM)update({brushAM:true});else if(!d.brushPM)update({brushPM:true});else update({brushAM:false,brushPM:false});}}>Smile<PtsBadge pts={10}/></button></div>}/>{[["floss","Floss",10],["shower","Shower",10],["shave","Shave",10]].map(([k,l,p])=>(<RowItem key={k} label={l} pts={d[k]?p:0} right={<Toggle on={!!d[k]} onChange={v=>update({[k]:v})} pts={p}/>}/>))}<RowItem label="Work out" pts={wpts} right={<div style={{display:"flex",gap:8,alignItems:"center"}}><Dots count={(d.workouts||[]).length} total={2}/><div style={{display:"flex",gap:6}}>{[["Lt",1,15],["Mod",2,30],["Int",3,60]].map(([label,val,p])=>{const count=(d.workouts||[]).filter(w=>(w.val??w)===val).length;return(<button key={val} style={{...cs.chip(count>0),background:count===2?dm.text:count===1?"#555":"transparent",color:count>0?(count===2?dm.bg:"#fff"):dm.text,borderColor:count>0?dm.text:dm.hint,position:"relative"}} onClick={()=>setModal(`workout-${val}`)}>{label}<PtsBadge pts={p}/></button>);})}</div></div>}/>{[["groom","Groom intentionally",10],["sunscreen","Apply sunscreen",10],["nap","Intentional nap",15],["breathing","Breathing exercise",15]].map(([k,l,p],i,arr)=>(<RowItem key={k} label={l} pts={d[k]?p:0} right={<Toggle on={!!d[k]} onChange={v=>update({[k]:v})} pts={p}/>} last={i===arr.length-1}/>))}</Section><Section label="Health" open={open.health} onToggle={()=>tog("health")}><RowItem label="Take medicine" pts={d.medicine?10:0} right={<Toggle on={!!d.medicine} onChange={v=>update({medicine:v})} pts={10}/>}/><RowItem label="Blood pressure" pts={(d.bp?.length||0)*10} right={<div style={{display:"flex",gap:8,alignItems:"center"}}><Dots count={d.bp?.length||0} total={2}/><button style={{...cs.chip((d.bp?.length||0)>0),position:"relative"}} onClick={()=>(d.bp?.length||0)<2&&setModal("bp")}>Log<PtsBadge pts={10}/></button></div>}/><RowItem label="Log weight" pts={d.weight?10:0} right={<button style={{...cs.chip(!!d.weight),position:"relative"}} onClick={()=>setModal("weight")}>{d.weight?`${d.weight} lbs`:"Log"}<PtsBadge pts={10}/></button>} last/></Section><Section label="Soul" open={open.soul} onToggle={()=>tog("soul")}><RowItem label="Read scripture" pts={[0,15,25,35][d.scripture]||0} right={<div style={{display:"flex",gap:6}}>{["10m","20m","30m+"].map((l,i)=>(<button key={i} style={{...cs.chip(d.scripture===i+1),position:"relative"}} onClick={()=>setModal(`scripture-${i+1}`)}>{l}<PtsBadge pts={[15,25,35][i]}/></button>))}</div>}/><RowItem label="Prayer" pts={d.prayer?.duration?[0,15,25,35][d.prayer.duration]||0:0} right={<div style={{display:"flex",gap:6}}>{["5m","15m","25m+"].map((l,i)=>(<button key={i} style={{...cs.chip((d.prayer?.duration||0)===i+1),position:"relative"}} onClick={()=>setModal(`prayer-${i+1}`)}>{l}<PtsBadge pts={[15,25,35][i]}/></button>))}</div>}/><RowItem label="Emotional check-in" pts={(d.emotions?.length||0)*10} right={<div style={{display:"flex",gap:8,alignItems:"center"}}><Dots count={d.emotions?.length||0} total={4}/><button style={{...cs.chip((d.emotions?.length||0)>0),position:"relative"}} onClick={()=>setModal("emotion")}>{EMOTION_BTN}<PtsBadge pts={10}/></button></div>}/>{(d.emotions||[]).map((e,i)=>(<div key={i} style={{padding:"2px 16px 4px",fontSize:12,color:dm.hint}}>{e.core}{e.mid?` - ${e.mid}`:""}{e.specific?` - ${e.specific}`:""}</div>))}<RowItem label="Connect with someone" pts={d.connect?30:0} right={<button style={{...cs.chip(!!d.connect),position:"relative"}} onClick={()=>setModal("connect")}>{d.connectNote?d.connectNote.slice(0,10)+(d.connectNote.length>10?"...":""):"Heyyy"}<PtsBadge pts={30}/></button>} last/></Section><Section label="Mind" open={open.mind} onToggle={()=>tog("mind")}>{[["planDay","Plan your day",20],["notifZero","Notifications to zero",20],["emailZero","Email to zero",25]].map(([k,l,p])=>(<RowItem key={k} label={l} pts={d[k]?p:0} right={<Toggle on={!!d[k]} onChange={v=>update({[k]:v})} pts={p}/>}/>))}<RowItem label="Complete avoided task" pts={d.avoidedTask?50:0} right={<button style={{...cs.chip(!!d.avoidedTask),position:"relative"}} onClick={()=>setModal("avoidedTask")}>{d.avoidedTaskNote?d.avoidedTaskNote.slice(0,10)+(d.avoidedTaskNote.length>10?"...":""):"Slay"}<PtsBadge pts={50}/></button>}/><RowItem label="Phone-free walk" pts={[0,20,40,70][d.walk]||0} right={<div style={{display:"flex",gap:6}}>{[["10m",1,20],["30m",2,40],["60m+",3,70]].map(([l,val,p])=>(<button key={val} style={{...cs.chip(d.walk===val),position:"relative"}} onClick={()=>update({walk:d.walk===val?0:val})}>{l}<PtsBadge pts={p}/></button>))}</div>}/><RowItem label="Journal" pts={Math.min(3,journalCount)*20} right={<div style={{display:"flex",gap:8,alignItems:"center"}}><Dots count={Math.min(3,journalCount)} total={3}/><button style={{...cs.chip(journalCount>0),position:"relative"}} onClick={()=>setModal("journal")}>{journalCount>=3?"Fanfic again":"Fanfic"}<PtsBadge pts={20}/></button></div>}/><RowItem label="Read a book" pts={[0,25,45,70][d.readBook]||0} right={<div style={{display:"flex",gap:6}}>{[["20m",1,25],["40m",2,45],["60m+",3,70]].map(([l,val,p])=>(<button key={val} style={{...cs.chip(d.readBook===val),position:"relative"}} onClick={()=>setModal(`readBook-${val}`)}>{l}<PtsBadge pts={p}/></button>))}</div>}/><RowItem label="Hobby" pts={hobbyPts} right={<div style={{display:"flex",gap:8,alignItems:"center"}}><Dots count={Math.min(6,hobbyBlocks)} total={6}/><button style={{...cs.chip((d.hobbies?.length||0)>0),position:"relative"}} onClick={()=>setModal("hobby")}>Log<PtsBadge pts={10}/></button></div>} last/>{(d.hobbies||[]).map((h,i)=>(<div key={i} style={{padding:"2px 16px 4px",fontSize:12,color:dm.hint}}>{h.note||"Hobby"} - {fmtDur(h.minutes)}</div>))}</Section><Section label="Food" open={open.food} onToggle={()=>tog("food")}><CalorieDisplay d={d}/><RowItem label="Meals" pts={((d.meals?.breakfast?1:0)+(d.meals?.lunch?1:0)+(d.meals?.dinner?1:0))*10+(d.snacks?.length||0)*3+(d.tasteJournal?10:0)} right={<div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>{["breakfast","lunch","dinner"].map(m=>(<button key={m} style={{...cs.chip(!!d.meals?.[m]),position:"relative"}} onClick={()=>setModal(`meal-${m}`)}>{m.charAt(0).toUpperCase()+m.slice(1)}<PtsBadge pts={10}/></button>))}<button style={{...cs.chip(false),position:"relative"}} onClick={()=>setModal("snack")}>Snack{(d.snacks?.length||0)>0?` (${d.snacks.length})`:""}<PtsBadge pts={3}/></button></div>}/>{[["cookMeal","Cook a meal at home",30],["platFood","Plate your food nicely",15],["makeCoffee","Make coffee",10]].map(([k,l,p])=>(<RowItem key={k} label={l} pts={d[k]?p:0} right={<Toggle on={!!d[k]} onChange={v=>update({[k]:v})} pts={p}/>}/>))}<RowItem label="Hydrate" pts={Math.min(5,d.waterRefills||0)*5} right={<div style={{display:"flex",gap:8,alignItems:"center"}}><Dots count={Math.min(5,d.waterRefills||0)} total={5}/><button style={{...cs.chip((d.waterRefills||0)>0),position:"relative"}} onClick={()=>{const n=d.waterRefills||0;update({waterRefills:n>=5?0:n+1});}}>Slurp<PtsBadge pts={5}/></button></div>} last/></Section><Section label="Home" open={open.home} onToggle={()=>tog("home")}>{[["makeBed","Make bed",10],["mowLawn","Mow the lawn",80]].map(([k,l,p])=>(<RowItem key={k} label={l} pts={d[k]?p:0} right={<Toggle on={!!d[k]} onChange={v=>update({[k]:v})} pts={p}/>}/>))}<RowItem label="Cleaning session" pts={[0,20,40,70][d.cleaning?.tier]||0} right={<div style={{display:"flex",gap:6}}>{[["10m",1,20],["30m",2,40],["60m+",3,70]].map(([l,val,p])=>(<button key={val} style={{...cs.chip((d.cleaning?.tier||0)===val),position:"relative"}} onClick={()=>setModal(`cleaning-${val}`)}>{l}<PtsBadge pts={p}/></button>))}</div>} last/></Section></div>);}
 
-function HistoryView({allData,goal}){const days=[];for(let i=0;i<60;i++){const dt=new Date();dt.setDate(dt.getDate()-i);const k=dt.toISOString().slice(0,10);days.push({k,pts:calcPoints(allData[k]||defaultDay()),label:dt.toLocaleDateString("en-US",{month:"short",day:"numeric"}),hasData:!!allData[k]});}return(<div style={cs.sec}><div style={{paddingBottom:10}}><span style={cs.secHead}>Last 60 days</span></div><div style={cs.card}>{days.map(({k,pts,label,hasData},i)=>{const pct=Math.min(100,Math.round((pts/goal)*100)),met=pts>=goal,partial=pts>=goal*0.55;return(<div key={k}><div style={{...cs.row,minHeight:52}}><span style={{fontSize:14,color:dm.subtext,minWidth:60}}>{label}</span><div style={{flex:1,margin:"0 10px"}}><div style={{height:8,borderRadius:4,background:dm.border,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:met?dm.green:partial?dm.orange:dm.blue,borderRadius:4,transition:"width 0.4s"}}/></div></div><span style={{fontSize:14,fontWeight:500,minWidth:32,textAlign:"right",color:dm.text}}>{pts}</span>{hasData&&<span style={cs.badge(met)}>{met?"Goal":partial?"~":"Low"}</span>}</div>{i<days.length-1&&<div style={cs.divider}/>}</div>);})}</div></div>);}
+function HistoryView({allData,goal}){const days=[];for(let i=0;i<60;i++){const dt=new Date();dt.setDate(dt.getDate()-i);const k=dt.toISOString().slice(0,10);days.push({k,pts:calcPoints(allData[k]||defaultDay(),neglectMults(allData,k)),label:dt.toLocaleDateString("en-US",{month:"short",day:"numeric"}),hasData:!!allData[k]});}return(<div style={cs.sec}><div style={{paddingBottom:10}}><span style={cs.secHead}>Last 60 days</span></div><div style={cs.card}>{days.map(({k,pts,label,hasData},i)=>{const pct=Math.min(100,Math.round((pts/goal)*100)),met=pts>=goal,partial=pts>=goal*0.55;return(<div key={k}><div style={{...cs.row,minHeight:52}}><span style={{fontSize:14,color:dm.subtext,minWidth:60}}>{label}</span><div style={{flex:1,margin:"0 10px"}}><div style={{height:8,borderRadius:4,background:dm.border,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:met?dm.green:partial?dm.orange:dm.blue,borderRadius:4,transition:"width 0.4s"}}/></div></div><span style={{fontSize:14,fontWeight:500,minWidth:32,textAlign:"right",color:dm.text}}>{pts}</span>{hasData&&<span style={cs.badge(met)}>{met?"Goal":partial?"~":"Low"}</span>}</div>{i<days.length-1&&<div style={cs.divider}/>}</div>);})}</div></div>);}
 
 function SettingsView({settings,saveSettings,allData,onSignOut,wipeToday}){const[confirmWipe,setConfirmWipe]=useState(false);function exportCSV(){
   const yn=v=>v?"Yes":"No";
@@ -212,7 +250,7 @@ function SettingsView({settings,saveSettings,allData,onSignOut,wipeToday}){const
     "Make Bed","Mow Lawn","Cleaning Session","Cleaning Areas"];
   const rows=[headers];
   Object.keys(allData).sort().forEach(k=>{
-    const d=allData[k],pts=calcPoints(d);
+    const d=allData[k],pts=calcPoints(d,neglectMults(allData,k));
     const bp1=d.bp?.[0]?`${d.bp[0].sys}/${d.bp[0].dia} @ ${d.bp[0].time}`:"";
     const bp2=d.bp?.[1]?`${d.bp[1].sys}/${d.bp[1].dia} @ ${d.bp[1].time}`:"";
     const journals=d.journal||[];
@@ -286,13 +324,21 @@ export default function Tracker({session}){
   async function wipeToday(){const fresh=defaultDay();setAllData(prev=>({...prev,[today]:fresh}));setSaving(true);await supabase.from('habit_days').upsert({user_id:session.user.id,date:today,data:fresh,updated_at:new Date().toISOString()},{onConflict:'user_id,date'});setSaving(false);}
   async function signOut(){await supabase.auth.signOut();}
 
-  const pts=calcPoints(d);
+  const todayMults=neglectMults(allData,today);
+  const pts=calcPoints(d,todayMults);
   const pct=Math.min(100,Math.round((pts/settings.daily)*100));
-  const weekPts=(()=>{let t=0;for(let i=0;i<7;i++){t+=calcPoints(allData[easternDateKey(i)]||defaultDay());}return t;})();
+  // Habits whose value is currently boosted and that haven't been done yet today — the actionable targets.
+  const hotHabits=HABITS.filter(h=>todayMults[h.id]>1.001&&!h.done(d)).sort((a,b)=>todayMults[b.id]-todayMults[a.id]).slice(0,8);
+  const weekPts=(()=>{let t=0;for(let i=0;i<=daysSinceWeekReset();i++){const k=easternDateKey(i);t+=calcPoints(allData[k]||defaultDay(),neglectMults(allData,k));}return t;})();
+  // Total points for a given week. weekOffset 0 = current (in-progress) week, 1 = last completed week, etc.
+  const weekTotal=(weekOffset)=>{const sinceReset=daysSinceWeekReset();const start=weekOffset===0?0:sinceReset+1+(weekOffset-1)*7;const end=weekOffset===0?sinceReset:start+6;let t=0;for(let i=start;i<=end;i++){const k=easternDateKey(i);t+=calcPoints(allData[k]||defaultDay(),neglectMults(allData,k));}return t;};
   const mealKey=modal&&modal.startsWith("meal-")?modal.slice(5):null;
   const barColor=pts>=settings.daily?dm.green:pts>=settings.daily*0.55?dm.orange:dm.blue;
   const turtleState=pts>=settings.daily?3:pts>=settings.daily*0.67?2:pts>=settings.daily*0.34?1:0;
-  const streak=(()=>{let s=0;for(let i=0;i<365;i++){const k=easternDateKey(i);if(i===0){s++;continue;}const dp=calcPoints(allData[k]||{});if(dp>=settings.daily){s++;}else if(dp>=settings.daily*0.67){continue;}else break;}return s;})();
+  const streak=(()=>{let s=0;const sinceReset=daysSinceWeekReset();for(let i=0;i<365;i++){const k=easternDateKey(i);const weekOffset=i<=sinceReset?0:Math.floor((i-sinceReset-1)/7)+1;
+    // Weekly backstop: a completed week that missed the weekly goal resets the streak.
+    if(weekOffset>=1&&weekTotal(weekOffset)<settings.weekly)break;
+    if(i===0){s++;continue;}const dp=calcPoints(allData[k]||defaultDay(),neglectMults(allData,k));if(dp>=settings.daily){s++;}else if(dp>=settings.daily*0.67){continue;}else break;}return s;})();
 
   useEffect(()=>{
     const canvas=bannerRef.current;if(!canvas)return;
@@ -352,7 +398,7 @@ export default function Tracker({session}){
       </div>
       </div>
 
-      {view==="today"&&<TodayView d={d} update={update} setModal={setModal}/>}
+      {view==="today"&&<><HotStrip hot={hotHabits} mults={todayMults}/><TodayView d={d} update={update} setModal={setModal}/></>}
       {view==="history"&&<HistoryView allData={allData} goal={settings.daily}/>}
       {view==="settings"&&<SettingsView settings={settings} saveSettings={saveSettings} allData={allData} onSignOut={signOut} wipeToday={wipeToday}/>}
     </div>
